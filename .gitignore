@@ -1,3 +1,6 @@
 .idea/
 models/
 **/__pycache__/**
+*.pddl
+temp
+*.p

@@ -1,6 +1,7 @@
 import gym
 from gym_grid_driving.envs.grid_driving import LaneSpec
 
+
 def construct_task2_env():
     large_config = {'observation_type': 'tensor', 'agent_speed_range': [-3, -1], 'width': 50,
               'lanes': [LaneSpec(cars=7, speed_range=[-2, -1]),
@@ -30,4 +31,4 @@ def construct_task2_env():
                   LaneSpec(cars=3, speed_range=[-2, -1]),
                   LaneSpec(cars=4, speed_range=[-2, -1])
               ]}
-    return gym.make('GridDriving-v0', **small_config)
+    return gym.make('GridDriving-v0', **medium_config)

@@ -14,6 +14,8 @@ import torch.optim as optim
 
 from gym_grid_driving.envs.grid_driving import LaneSpec
 
+from utils import *
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 script_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.join(script_path, 'model.pt')
@@ -223,6 +225,17 @@ def compute_epsilon(episode):
     return epsilon
 
 
+def reward_shape(state, next_state, reward, done, reward_shaping_mtx):
+    alpha = 1
+    pos_next_state = np.where(next_state[1] == 1)
+    next_x, next_y = int(pos_next_state[1]), int(pos_next_state[0])
+    pos_state = np.where(state[1] == 1)
+    x, y = int(pos_state[1]), int(pos_state[0])
+    f_reward = reward_shaping_mtx[next_x][next_y] - reward_shaping_mtx[x][y]
+    shaped_reward = reward + alpha * f_reward
+    return shaped_reward
+
+
 def train(model_class, env):
     '''
     Train a model of instance `model_class` on environment `env` (`GridDrivingEnv`).
@@ -241,6 +254,13 @@ def train(model_class, env):
     target = model_class(env.observation_space.shape, env.action_space.n).to(device)
     target.load_state_dict(model.state_dict())
     target.eval()
+
+    reward_shaping_path = "reward_shaping.p"
+    if os.path.exists(reward_shaping_path):
+        reward_shaping_mtx = load_from_pickle(reward_shaping_path)
+    else:
+        n_lanes, n_width = len(env.lanes), env.width
+        reward_shaping_mtx = np.zeros(n_width, n_lanes)
 
     # Initialize replay buffer
     memory = ReplayBuffer()
@@ -264,6 +284,8 @@ def train(model_class, env):
 
             # Apply the action to the environment
             next_state, reward, done, info = env.step(action)
+
+            reward = reward_shape(state, next_state, reward, done, reward_shaping_mtx)
 
             # Save transition to replay buffer
             memory.push(Transition(state, [action], [reward], next_state, [done]))
@@ -365,7 +387,7 @@ def get_env():
                   LaneSpec(cars=3, speed_range=[-2, -1]),
                   LaneSpec(cars=4, speed_range=[-2, -1])
               ]}
-    return gym.make('GridDriving-v0', **medium_config)
+    return gym.make('GridDriving-v0', **small_config)
 
 
 if __name__ == '__main__':
