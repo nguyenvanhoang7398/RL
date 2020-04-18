@@ -4,3 +4,4 @@ models/
 *.pddl
 temp
 *.p
+*.pt

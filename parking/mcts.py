@@ -4,19 +4,6 @@ from gym.utils import seeding
 import math
 
 
-def randomPolicy(state, env):
-    '''
-    Policy followed in MCTS simulation for playout
-    '''
-    global random
-    reward = 0.
-    while not state.isDone():
-        action = random.choice(env.actions)
-        state = state.simulateStep(env=env,action=action)
-        reward += state.getReward()
-    return reward
-
-
 class GridWorldState():
     def __init__(self, state, reward=0, is_done=False):
         '''
@@ -78,7 +65,7 @@ class Node:
 
 
 class MonteCarloTreeSearch:
-    def __init__(self, env, numiters, explorationParam, playoutPolicy=randomPolicy, random_seed=None):
+    def __init__(self, env, numiters, explorationParam, playoutPolicy, random_seed=None):
         '''
         self.numiters : Number of MCTS iterations
         self.explorationParam : exploration constant used in computing value of node

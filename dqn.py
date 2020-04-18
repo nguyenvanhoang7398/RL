@@ -15,17 +15,19 @@ import torch.optim as optim
 from gym_grid_driving.envs.grid_driving import LaneSpec
 
 from utils import *
+from parking.env import construct_task2_env
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 script_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.join(script_path, 'model.pt')
+reward_shaping_path = "reward_shaping.p"
 
 # Hyperparameters --- don't change, RL is very sensitive
 learning_rate = 0.001
 gamma = 0.98
 buffer_limit = 5000
 batch_size = 32
-max_episodes = 500000
+max_episodes = 50000
 t_max = 600
 min_buffer = 1000
 target_update = 20  # episode(s)
@@ -255,12 +257,13 @@ def train(model_class, env):
     target.load_state_dict(model.state_dict())
     target.eval()
 
-    reward_shaping_path = "reward_shaping.p"
     if os.path.exists(reward_shaping_path):
         reward_shaping_mtx = load_from_pickle(reward_shaping_path)
+        use_reward_shaping = True
     else:
         n_lanes, n_width = len(env.lanes), env.width
         reward_shaping_mtx = np.zeros(n_width, n_lanes)
+        use_reward_shaping = False
 
     # Initialize replay buffer
     memory = ReplayBuffer()
@@ -298,7 +301,8 @@ def train(model_class, env):
 
         # Train the model if memory is sufficient
         if len(memory) > min_buffer:
-            if np.mean(rewards[print_interval:]) < 0.1:
+            if (np.mean(rewards[print_interval:]) < 0.1 and not use_reward_shaping) or \
+                    (np.mean(rewards[print_interval:]) < 0.0 and use_reward_shaping):
                 print('Bad initialization. Please restart the training.')
                 return None
             for i in range(train_steps):
@@ -359,35 +363,12 @@ def get_model():
     return model
 
 
-def save_model(model):
+def save_model(model, model_path=model_path):
     '''
     Save `model` to disk. Location is specified in `model_path`.
     '''
     data = (model.__class__.__name__, model.state_dict(), model.input_shape, model.num_actions)
     torch.save(data, model_path)
-
-
-def get_env():
-    '''
-    Get the sample test cases for training and testing.
-    '''
-    small_config = {'observation_type': 'tensor', 'agent_speed_range': [-2, -1], 'stochasticity': 0.0, 'width': 10,
-              'lanes': [
-                  LaneSpec(cars=3, speed_range=[-2, -1]),
-                  LaneSpec(cars=4, speed_range=[-2, -1]),
-                  LaneSpec(cars=2, speed_range=[-1, -1]),
-                  LaneSpec(cars=2, speed_range=[-3, -1])
-              ]}
-    medium_config = {'observation_type': 'tensor', 'agent_speed_range': [-3, -1], 'width': 15,
-              'lanes': [
-                  LaneSpec(cars=3, speed_range=[-2, -1]),
-                  LaneSpec(cars=4, speed_range=[-2, -1]),
-                  LaneSpec(cars=2, speed_range=[-1, -1]),
-                  LaneSpec(cars=2, speed_range=[-3, -1]),
-                  LaneSpec(cars=3, speed_range=[-2, -1]),
-                  LaneSpec(cars=4, speed_range=[-2, -1])
-              ]}
-    return gym.make('GridDriving-v0', **small_config)
 
 
 if __name__ == '__main__':
@@ -397,7 +378,9 @@ if __name__ == '__main__':
     parser.add_argument('--train', dest='train', action='store_true', help='train the agent')
     args = parser.parse_args()
 
-    env = get_env()
+    env = construct_task2_env()
+
+    print("Training on {} x {} environment".format(len(env.lanes), env.width))
 
     if args.train:
         model = None
