@@ -22,7 +22,18 @@ learning_rate = 0.001
 converge_max = 5
 converge_margin = 1e-3
 
+env = construct_task2_env(tensor_state=False)
+tensor_env = construct_task2_env()
+n_lanes, n_width = len(env.lanes), env.width
+
 random, seed = seeding.np_random(random_seed)
+
+if os.path.exists(reward_shaping_path):
+    reward_shaping_mtx = load_from_pickle(reward_shaping_path)
+    use_reward_shaping = True
+else:
+    reward_shaping_mtx = np.zeros(n_width, n_lanes)
+    use_reward_shaping = False
 
 
 def randomPolicy(state, env):
@@ -33,7 +44,11 @@ def randomPolicy(state, env):
     reward = 0.
     while not state.isDone():
         action = random.choice(env.actions)
-        state = state.simulateStep(env=env,action=action)
+        curr_state = env.world.as_tensor()
+        state = state.simulateStep(env=env, action=action)
+        next_state = env.world.as_tensor()
+        reward = state.getReward()
+        reward = reward_shape(curr_state, next_state, reward, False, reward_shaping_mtx)
         reward += state.getReward()
     return reward
 
@@ -68,14 +83,6 @@ class DAGGER(object):
         return action_map
 
     def run(self):
-
-        if os.path.exists(reward_shaping_path):
-            reward_shaping_mtx = load_from_pickle(reward_shaping_path)
-            use_reward_shaping = True
-        else:
-            reward_shaping_mtx = np.zeros(self.n_width, self.n_lanes)
-            use_reward_shaping = False
-
         best_f1_val = 0.
 
         # iterate through epochs
@@ -153,9 +160,6 @@ class DAGGER(object):
 
 
 def run_dagger():
-    env = construct_task2_env(tensor_state=False)
-    tensor_env = construct_task2_env()
-    n_lanes, n_width = len(env.lanes), env.width
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     policy_net = ConvDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
 
