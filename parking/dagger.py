@@ -106,7 +106,7 @@ class DAGGER(object):
                 data_x.append(trajectory_tensor_states[i])
                 data_y.append(self.action_map[str(action)])
 
-            train_x, test_x, train_y, test_y = train_test_split(data_x, data_y, test_size=0.33)
+            train_x, test_x, train_y, test_y = train_test_split(data_x, data_y, test_size=0.1)
 
             train_x_tensor = torch.FloatTensor(train_x).to(self.device)
             train_y_tensor = torch.LongTensor(train_y).to(self.device)
