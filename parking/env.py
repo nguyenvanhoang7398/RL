@@ -3,7 +3,7 @@ from gym_grid_driving.envs.grid_driving import LaneSpec
 
 
 def construct_task2_env(tensor_state=True):
-    large_config = {'observation_type': 'tensor', 'agent_speed_range': [-3, -1], 'width': 50,
+    large_config = {'agent_speed_range': [-3, -1], 'width': 50,
               'lanes': [LaneSpec(cars=7, speed_range=[-2, -1]),
                         LaneSpec(cars=8, speed_range=[-2, -1]),
                         LaneSpec(cars=6, speed_range=[-1, -1]),
@@ -40,7 +40,7 @@ def construct_task2_env(tensor_state=True):
                               LaneSpec(cars=7, speed_range=[-2, -1]),
                               ]
                     }
-    config = medium_large_config
+    config = large_config
     if tensor_state:
         config['observation_type'] = 'tensor'
     return gym.make('GridDriving-v0', **config)
