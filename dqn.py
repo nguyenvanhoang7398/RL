@@ -20,7 +20,7 @@ from parking.env import construct_task2_env
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 script_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.join(script_path, 'model.pt')
-reward_shaping_path = "reward_shaping.p"
+reward_shaping_path = "reward_shaping_large_half.p"
 
 # Hyperparameters --- don't change, RL is very sensitive
 learning_rate = 0.001

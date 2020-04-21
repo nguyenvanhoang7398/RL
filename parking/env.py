@@ -1,5 +1,5 @@
 import gym
-from gym_grid_driving.envs.grid_driving import LaneSpec
+from gym_grid_driving.envs.grid_driving import LaneSpec, Point
 
 
 def construct_task2_env(tensor_state=True):
@@ -40,7 +40,20 @@ def construct_task2_env(tensor_state=True):
                               LaneSpec(cars=7, speed_range=[-2, -1]),
                               ]
                     }
-    config = large_config
+    curri_large_config = {'agent_speed_range': [-3, -1], 'width': 50,
+                    'lanes': [LaneSpec(cars=7, speed_range=[-2, -1]),
+                              LaneSpec(cars=8, speed_range=[-2, -1]),
+                              LaneSpec(cars=6, speed_range=[-1, -1]),
+                              LaneSpec(cars=6, speed_range=[-3, -1]),
+                              LaneSpec(cars=7, speed_range=[-2, -1]),
+                              LaneSpec(cars=8, speed_range=[-2, -1]),
+                              LaneSpec(cars=6, speed_range=[-3, -2]),
+                              LaneSpec(cars=7, speed_range=[-1, -1]),
+                              LaneSpec(cars=6, speed_range=[-2, -1]),
+                              LaneSpec(cars=8, speed_range=[-2, -2])],
+                    'finish_position': Point(25, 5)
+                    }
+    config = curri_large_config
     if tensor_state:
         config['observation_type'] = 'tensor'
     return gym.make('GridDriving-v0', **config)

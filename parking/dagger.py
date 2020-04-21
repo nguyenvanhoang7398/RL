@@ -10,15 +10,15 @@ from gym.utils import seeding
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, confusion_matrix
 from dqn import save_model
 from tqdm import tqdm
 
 random_seed = 42
-n_episodes = 200
+n_episodes = 2000
 n_epochs = 50
-trajectory_len = 60
-numiters = 100
+trajectory_len = 5
+numiters = 10
 learning_rate = 0.001
 converge_max = 5
 converge_margin = 1e-6
@@ -38,6 +38,27 @@ else:
     print("Do not use reward shaping")
     reward_shaping_mtx = np.zeros(n_width, n_lanes)
     use_reward_shaping = False
+print("Shape: {}".format(reward_shaping_mtx.shape))
+
+
+def print_state_tensor(state_tensor):
+    cars = state_tensor[0]
+    agent = state_tensor[1]
+    goal = state_tensor[2]
+    all_state = cars * 1 + goal * 2 + agent * 3
+
+    def symbol(x):
+        if x == 0:
+            return "-"
+        if x == 1:
+            return "1"
+        elif x == 2:
+            return "F"
+        else:
+            return "<"
+
+    for row in all_state:
+        print("  ".join([symbol(x) for x in row]))
 
 
 def randomPolicy(state, env):
@@ -61,7 +82,7 @@ class DAGGER(object):
     """
     DAGGER Imitation learning with MCTS
     """
-    def __init__(self, n_lanes, n_width, policy_net, env, device):
+    def __init__(self, n_lanes, n_width, policy_net, env, device, debug=False):
         self.n_episodes = n_episodes
         self.trajectory_len = trajectory_len
         self.n_epochs = n_epochs
@@ -73,6 +94,7 @@ class DAGGER(object):
         self.device = device
         self.mcts = self.init_mcts()
         self.action_map = self.init_action_map()
+        self.debug = debug
 
     def init_mcts(self, explorationParam=1., random_seed=random_seed):
         # by default use random policy for playout policy
@@ -98,12 +120,16 @@ class DAGGER(object):
             trajectory_tensor_states = [self.env.world.as_tensor()]
             trajectory_normal_states = [deepcopy(self.env.state)]
 
+            agent_actions = []
+            expert_actions = []
+
             # sample T -step trajectory
             for _ in tqdm(range(self.trajectory_len), desc="Iterating trajectory"):
                 prev_states = trajectory_tensor_states[-1]
                 prev_state_tensor = torch.FloatTensor([prev_states]).to(self.device)
                 logits = self.policy_net(prev_state_tensor).squeeze(0)
                 action = int(torch.argmax(logits).detach().cpu())
+                agent_actions.append(action)
                 _, _, done, info = self.env.step(action)
                 if done:
                     break
@@ -118,8 +144,17 @@ class DAGGER(object):
             for i, state in enumerate(tqdm(trajectory_normal_states, desc="Run MCTS")):
                 grid_word_state = GridWorldState(state)
                 action = self.mcts.buildTreeAndReturnBestAction(initialState=grid_word_state)
+                expert_actions.append(action)
                 data_x.append(trajectory_tensor_states[i])
                 data_y.append(self.action_map[str(action)])
+
+            if self.debug:
+                for i, state in enumerate(trajectory_tensor_states):
+                    print("State")
+                    print_state_tensor(state)
+                    if i < len(agent_actions):
+                        print("Agent action: {}".format(self.env.actions[agent_actions[i]]))
+                        print("Expert action: {}".format(expert_actions[i]))
 
             if len(data_x) > 1:
                 train_x, test_x, train_y, test_y = train_test_split(data_x, data_y, test_size=0.1)
@@ -174,12 +209,22 @@ class DAGGER(object):
 
                 print("Episode: {} | Epoch: {} | Loss {}".format(episode, epoch, epoch_loss))
 
-            # testing imitation learning
+            self.policy_net.eval()
+            # evaluate training
+            train_x_tensor = torch.FloatTensor(all_train_x).to(self.device)
+            logits = self.policy_net(train_x_tensor)
+            train_predictions = np.argmax(logits.detach().cpu().numpy(), axis=1)
+            f1_val = f1_score(all_train_y, train_predictions, average="macro")
+            print("Episode: {} | F1: {} | Confusion matrix".format(episode, f1_val))
+            print(confusion_matrix(all_train_y, train_predictions))
+
+            # evaluate testing imitation learning
             test_x_tensor = torch.FloatTensor(all_test_x).to(self.device)
             logits = self.policy_net(test_x_tensor)
             predictions = np.argmax(logits.detach().cpu().numpy(), axis=1)
             f1_val = f1_score(all_test_y, predictions, average="macro")
-            print("Episode: {} | F1 {}".format(episode, f1_val))
+            print("Episode: {} | F1: {} | Confusion matrix".format(episode, f1_val))
+            print(confusion_matrix(all_test_y, predictions))
             if f1_val > best_f1_val:
                 print("Update f1 score")
                 best_f1_val = f1_val
@@ -191,5 +236,5 @@ def run_dagger():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     policy_net = ConvDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
 
-    dagger = DAGGER(n_lanes, n_width, policy_net, env, device)
+    dagger = DAGGER(n_lanes, n_width, policy_net, env, device, debug=True)
     dagger.run()
