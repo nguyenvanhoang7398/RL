@@ -312,7 +312,7 @@ class GeneratePDDL_Stationary:
         problem_file.close()
 
     '''
-    Helper Functions 
+    Helper Functions
     '''
 
     def addHeader(self, name):
@@ -390,10 +390,10 @@ def generateDomainPDDLFile(gen):
 
     Example :
 
-    The following statement adds the LOAD-TRUCK action from https://tinyurl.com/y3jocxdu [The domain file referenced in the assignment] to the domain file 
-    gen.addAction(name="LOAD-TRUCK", 
-                  parameters=(("pkg", "package"), ("truck" , "truck"), ("loc", "place")), 
-                  precondition_string="(and (at ?truck ?loc) (at ?pkg ?loc))", 
+    The following statement adds the LOAD-TRUCK action from https://tinyurl.com/y3jocxdu [The domain file referenced in the assignment] to the domain file
+    gen.addAction(name="LOAD-TRUCK",
+                  parameters=(("pkg", "package"), ("truck" , "truck"), ("loc", "place")),
+                  precondition_string="(and (at ?truck ?loc) (at ?pkg ?loc))",
                   effect_string= "(and (not (at ?pkg ?loc)) (in ?pkg ?truck))")
     '''
     pass
@@ -455,9 +455,9 @@ def parse_sas_plan(pos_memo, start_x, start_y):
 
 def heuristic_reward():
     # parse_sas_plan(pos_memo)
-    task2_env = construct_task2_env()
+    task2_env = construct_task2_env(conf=5)
     n_lanes, n_width, agent_speed_range = len(task2_env.lanes), task2_env.width, task2_env.agent_speed_range
-    pos_memo = [[0 if (x == 0 and y == 0) else None for y in range(n_lanes)] for x in range(n_width)]
+    pos_memo = [[0 if (x == 10 and y == 1) else None for y in range(n_lanes)] for x in range(n_width)]
 
     lanes = [LaneSpec(0, [0, 0])] * n_lanes
 
@@ -465,13 +465,16 @@ def heuristic_reward():
         for start_y in list(range(n_lanes))[::-1]:
             if pos_memo[start_x][start_y] is None:
                 print("Start x: {} start y: {}".format(start_x, start_y))
-                env = gym.make('GridDriving-v0', lanes=lanes, width=n_width,
-                               random_seed=42, agent_speed_range=(-3, -1), agent_pos_init=Point(x=start_x, y=start_y))
-                gen = initializeSystem(env)
-                generateDomainPDDLFile(gen)
-                generateProblemPDDLFile(gen)
-                runPDDLSolver(gen)
-                parse_sas_plan(pos_memo, start_x, start_y)
+                if start_x > 10:
+                    env = gym.make('GridDriving-v0', lanes=lanes, width=n_width,
+                                   random_seed=42, agent_speed_range=(-3, -1), finish_position=Point(10,1), agent_pos_init=Point(x=start_x, y=start_y))
+                    gen = initializeSystem(env)
+                    generateDomainPDDLFile(gen)
+                    generateProblemPDDLFile(gen)
+                    runPDDLSolver(gen)
+                    parse_sas_plan(pos_memo, start_x, start_y)
+                else:
+                    pos_memo[start_x][start_y] = -1
                 print("pos_memo:")
                 print(pos_memo)
 
@@ -488,4 +491,4 @@ def heuristic_reward():
     print("Final reward matrix")
     pos_memo = np.array(pos_memo)
     print(pos_memo)
-    save_to_pickle(pos_memo, "reward_shaping.p")
+    save_to_pickle(pos_memo, "reward_shaping_threequarter.p")
