@@ -2,6 +2,8 @@ from copy import deepcopy
 import gym
 from gym.utils import seeding
 import math
+from parking.utils import print_state_tensor
+from dqn import reward_shape_coord
 
 
 class GridWorldState():
@@ -65,7 +67,7 @@ class Node:
 
 
 class MonteCarloTreeSearch:
-    def __init__(self, env, numiters, explorationParam, playoutPolicy, random_seed=None):
+    def __init__(self, env, numiters, explorationParam, playoutPolicy, reward_shaping_mtx, random_seed=None):
         '''
         self.numiters : Number of MCTS iterations
         self.explorationParam : exploration constant used in computing value of node
@@ -77,6 +79,7 @@ class MonteCarloTreeSearch:
         self.explorationParam = explorationParam
         self.playoutPolicy = playoutPolicy
         self.root = None
+        self.reward_shaping_mtx = reward_shaping_mtx
         global random
         random, seed = seeding.np_random(random_seed)
 
@@ -87,10 +90,10 @@ class MonteCarloTreeSearch:
         self.root = Node(state=initialState, parent=None)
         for i in range(self.numiters):
             self.addNodeAndBackpropagate()
-        bestChild = self.chooseBestActionNode(self.root, 0)
+        bestChild, q_map = self.chooseBestActionNode(self.root, 0)
         for action, cur_node in self.root.children.items():
             if cur_node is bestChild:
-                return action
+                return action, q_map
 
     def addNodeAndBackpropagate(self):
         '''
@@ -98,6 +101,10 @@ class MonteCarloTreeSearch:
         '''
         node = self.addNode()
         reward = self.playoutPolicy(node.state, self.env)
+
+        # sum the reward from playout policy with the node reward
+        reward += node.totalReward
+
         self.backpropagate(node, reward)
 
     def addNode(self):
@@ -107,13 +114,32 @@ class MonteCarloTreeSearch:
         cur_node = self.root
         while not cur_node.isDone:
             if cur_node.allChildrenAdded:
-                cur_node = self.chooseBestActionNode(cur_node, self.explorationParam)
+                cur_node, _ = self.chooseBestActionNode(cur_node, self.explorationParam)
             else:
                 actions = self.env.actions
                 for action in actions:
                     if action not in cur_node.children:
                         childnode = cur_node.state.simulateStep(env=self.env, action=action)
+
                         newNode = Node(state=childnode, parent=cur_node)
+
+                        # update this new node reward with reward shaping
+                        cur_agent_pos = cur_node.state.state.agent.position
+                        cur_x, cur_y = cur_agent_pos.x, cur_agent_pos.y
+                        next_agent_pos = newNode.state.state.agent.position
+                        next_x, next_y = next_agent_pos.x, next_agent_pos.y
+
+                        goal_pos = cur_node.state.state.finish_position
+                        goal_x, goal_y = goal_pos.x, goal_pos.y
+                        done = childnode.is_done
+
+                        if goal_x != next_x and goal_y != next_y and done:
+                            # if the next state is done but not goal, decrease the reward of this state
+                            newNode.totalReward += -10
+
+                        newNode.totalReward += reward_shape_coord(cur_x, cur_y, next_x, next_y, newNode.totalReward,
+                                                                  self.reward_shaping_mtx)
+
                         cur_node.children[action] = newNode
                         if len(actions) == len(cur_node.children):
                             cur_node.allChildrenAdded = True
@@ -135,8 +161,8 @@ class MonteCarloTreeSearch:
 
     def chooseBestActionNode(self, node, explorationValue):
         global random
-        bestValue = float("-inf")
-        bestNodes = []
+
+        node_infos = []
         for child in node.children.values():
             '''
             FILL ME : Populate the list bestNodes with all children having maximum value
@@ -147,9 +173,14 @@ class MonteCarloTreeSearch:
             '''
             explore_val = explorationValue * math.sqrt((math.log(node.numVisits) / child.numVisits))
             node_val = child.totalReward / child.numVisits + explore_val
-            if node_val >= bestValue:
-                if node_val > bestValue:
-                    bestValue = node_val
-                    bestNodes = []
-                bestNodes.append(child)
-        return random.choice(bestNodes)
+
+            matched_action = None
+            for action, cur_node in self.root.children.items():
+                if cur_node is child:
+                    matched_action = action
+
+            node_infos.append((child, node_val, matched_action))
+        sorted_nodes = sorted(node_infos, key=lambda x: x[1])
+        best_node = sorted_nodes[-1][0]
+        q_map = {str(action): val for (node, val, action) in node_infos}
+        return best_node, q_map

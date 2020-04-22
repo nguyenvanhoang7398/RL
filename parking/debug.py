@@ -15,6 +15,7 @@ def debug():
     start_env = deepcopy(env)
     print("Start")
     env.render()
+
     print_state_tensor(env.world.as_tensor())
     while c < max_actions and not env.done:
         grid_word_state = GridWorldState(env.state)

@@ -128,13 +128,12 @@ class ExampleAgent(Agent):
         '''
 
 
-def create_agent(test_case_id, *args, **kwargs):
+def create_agent(test_case_id, model_path=None):
     '''
     Method that will be called to create your agent during testing.
     You can, for example, initialize different class of agent depending on test case.
     '''
-
-    model_path = "models/dqn.pt"
+    model_path = "models/dqn.pt" if model_path is None else model_path
     return ExampleAgent(test_case_id=test_case_id, model_path=model_path)
 
 
@@ -174,16 +173,16 @@ def run_test(mode="many"):
     timed_test(task)
 
 
-def test_single(agent, env, runs=1000, t_max=100):
+def test_single(agent, env, runs=1000, t_max=100, render_step=True):
     state = env.reset()
-    env.render()
+    if render_step:
+        env.render()
 
     agent_init = {'fast_downward_path': FAST_DOWNWARD_PATH, 'agent_speed_range': (-3, -1), 'gamma': 1}
     agent.initialize(**agent_init)
     episode_rewards = 0.0
     for t in range(t_max):
         action = agent.step(state)
-        print("Action: {}".format(action))
         next_state, reward, done, info = env.step(action)
         full_state = {
             'state': state, 'action': action, 'reward': reward, 'next_state': next_state,
@@ -192,11 +191,13 @@ def test_single(agent, env, runs=1000, t_max=100):
         agent.update(**full_state)
         state = next_state
         episode_rewards += reward
-        env.render()
+        if render_step:
+            print("Action: {}".format(action))
+            env.render()
         if done:
             break
 
-    print("Rewards : {:.1f}".format(runs, episode_rewards))
+    print("Rewards : {:.1f}".format(episode_rewards))
     return episode_rewards
 
 

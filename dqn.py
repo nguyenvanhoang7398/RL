@@ -20,7 +20,7 @@ from parking.env import construct_task2_env
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 script_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.join(script_path, 'model.pt')
-reward_shaping_path = "reward_shaping_large_half.p"
+reward_shaping_path = "reward_shaping_large_43_6.p"
 
 # Hyperparameters --- don't change, RL is very sensitive
 learning_rate = 0.001
@@ -227,18 +227,29 @@ def compute_epsilon(episode):
     return epsilon
 
 
-def reward_shape(state, next_state, reward, done, reward_shaping_mtx):
+def reward_shape_coord(x, y, next_x, next_y, reward, reward_shaping_mtx):
     alpha = 1
-    pos_next_state = np.where(next_state[1] == 1)
-    next_x, next_y = int(pos_next_state[1]), int(pos_next_state[0])
-    pos_state = np.where(state[1] == 1)
-    x, y = int(pos_state[1]), int(pos_state[0])
     f_reward = reward_shaping_mtx[next_x][next_y] - reward_shaping_mtx[x][y]
     shaped_reward = reward + alpha * f_reward
     return shaped_reward
 
 
-def train(model_class, env):
+def reward_shape(state, next_state, reward, done, reward_shaping_mtx):
+    pos_next_state = np.where(next_state[1] == 1)
+    next_x, next_y = int(pos_next_state[1]), int(pos_next_state[0])
+    pos_state = np.where(state[1] == 1)
+    x, y = int(pos_state[1]), int(pos_state[0])
+
+    goal_state = np.where(state[2] == 1)
+    goal_x, goal_y = int(goal_state[1]), int(goal_state[0])
+
+    if goal_x != next_x and goal_y != next_y and not done:
+        # if the next state is done but not goal, decrease the reward of this state
+        reward += -10
+    return reward_shape_coord(x, y, next_x, next_y, reward, reward_shaping_mtx)
+
+
+def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_path, input_t_max=None):
     '''
     Train a model of instance `model_class` on environment `env` (`GridDrivingEnv`).
 
@@ -250,20 +261,27 @@ def train(model_class, env):
 
     Output: `model`: the trained model.
     '''
-
+    if input_t_max is not None:
+        t_max = input_t_max
     # Initialize model and target network
-    model = model_class(env.observation_space.shape, env.action_space.n).to(device)
+    if pretrained is None:
+        model = model_class(env.observation_space.shape, env.action_space.n).to(device)
+    else:
+        model = pretrained
     target = model_class(env.observation_space.shape, env.action_space.n).to(device)
     target.load_state_dict(model.state_dict())
     target.eval()
 
-    if os.path.exists(reward_shaping_path):
-        reward_shaping_mtx = load_from_pickle(reward_shaping_path)
+    if os.path.exists(reward_shaping_p):
+        reward_shaping_mtx = load_from_pickle(reward_shaping_p)
         use_reward_shaping = True
     else:
         n_lanes, n_width = len(env.lanes), env.width
         reward_shaping_mtx = np.zeros(n_width, n_lanes)
         use_reward_shaping = False
+
+    print("Reward shaping mtx")
+    print(reward_shaping_mtx.T)
 
     # Initialize replay buffer
     memory = ReplayBuffer()
@@ -300,9 +318,10 @@ def train(model_class, env):
         rewards.append(episode_rewards)
 
         # Train the model if memory is sufficient
+        norm_factor = 1 if input_t_max is None else input_t_max
         if len(memory) > min_buffer:
             if (np.mean(rewards[print_interval:]) < 0.1 and not use_reward_shaping) or \
-                    (np.mean(rewards[print_interval:]) < 0.0 and use_reward_shaping):
+                    (np.mean(rewards[print_interval:]) / norm_factor < -5.0 and use_reward_shaping):
                 print('Bad initialization. Please restart the training.')
                 return None
             for i in range(train_steps):
@@ -378,15 +397,15 @@ if __name__ == '__main__':
     parser.add_argument('--train', dest='train', action='store_true', help='train the agent')
     args = parser.parse_args()
 
-    env = construct_task2_env()
+    default_env = construct_task2_env()
 
-    print("Training on {} x {} environment".format(len(env.lanes), env.width))
+    print("Training on {} x {} environment".format(len(default_env.lanes), default_env.width))
 
     if args.train:
         model = None
         while model is None:
-            model = train(ConvDQN, env)
+            model = train(ConvDQN, default_env)
         save_model(model)
     else:
         model = get_model()
-    test(model, env, max_episodes=600)
+    test(model, default_env, max_episodes=600)
