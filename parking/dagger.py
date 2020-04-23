@@ -63,6 +63,43 @@ else:
 # print(reward_shaping_mtx.T)
 
 
+def agentPolicy(state, env, policy_net):
+    global random
+    # print(state.state[3])
+    reward = 0.
+    cnt = 0
+    while not state.isDone() and cnt < max_playout_step:
+        state_np = env.world.as_tensor()
+        state_tensor = torch.FloatTensor([state_np]).to(device)
+        logits = policy_net(state_tensor).squeeze(0)
+        action_idx = int(torch.argmax(logits).detach().cpu())
+        action = env.actions[action_idx]
+
+        next_state = state.simulateStep(env=env, action=action)
+        reward = state.getReward()
+
+        # update this new node reward with reward shaping
+        cur_agent_pos = state.state.agent.position
+        cur_x, cur_y = cur_agent_pos.x, cur_agent_pos.y
+        next_agent_pos = next_state.state.agent.position
+        next_x, next_y = next_agent_pos.x, next_agent_pos.y
+
+        goal_pos = state.state.finish_position
+        goal_x, goal_y = goal_pos.x, goal_pos.y
+        done = next_state.is_done
+
+        if goal_x != next_x and goal_y != next_y and done:
+            # if the next state is done but not goal, decrease the reward of this state
+            reward += -10
+
+        reward = reward_shape_coord(cur_x, cur_y, next_x, next_y, reward,
+                                    reward_shaping_mtx)
+        # reward += state.getReward()
+        state = next_state
+        cnt += 1
+    return reward
+
+
 def randomPolicy(state, env):
     '''
     Policy followed in MCTS simulation for playout
