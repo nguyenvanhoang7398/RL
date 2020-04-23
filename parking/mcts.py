@@ -67,7 +67,8 @@ class Node:
 
 
 class MonteCarloTreeSearch:
-    def __init__(self, env, numiters, explorationParam, playoutPolicy, reward_shaping_mtx, random_seed=None):
+    def __init__(self, env, numiters, explorationParam, playoutPolicy, reward_shaping_mtx, policy_net,
+                 random_seed=None):
         '''
         self.numiters : Number of MCTS iterations
         self.explorationParam : exploration constant used in computing value of node
@@ -80,6 +81,7 @@ class MonteCarloTreeSearch:
         self.playoutPolicy = playoutPolicy
         self.root = None
         self.reward_shaping_mtx = reward_shaping_mtx
+        self.policy_net = policy_net
         global random
         random, seed = seeding.np_random(random_seed)
 
@@ -100,7 +102,7 @@ class MonteCarloTreeSearch:
         Function to run a single MCTS iteration
         '''
         node = self.addNode()
-        reward = self.playoutPolicy(node.state, self.env)
+        reward = self.playoutPolicy(node.state, self.env, self.policy_net)
 
         # sum the reward from playout policy with the node reward
         reward += node.totalReward
@@ -117,6 +119,8 @@ class MonteCarloTreeSearch:
                 cur_node, _ = self.chooseBestActionNode(cur_node, self.explorationParam)
             else:
                 actions = self.env.actions
+                # exclude down
+                actions = [a for a in actions if str(a) != "down"]
                 for action in actions:
                     if action not in cur_node.children:
                         childnode = cur_node.state.simulateStep(env=self.env, action=action)

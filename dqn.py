@@ -11,6 +11,7 @@ import torch.autograd as autograd
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from scipy.special import softmax
 
 from gym_grid_driving.envs.grid_driving import LaneSpec
 
@@ -20,19 +21,19 @@ from parking.env import construct_task2_env
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 script_path = os.path.dirname(os.path.realpath(__file__))
 model_path = os.path.join(script_path, 'model.pt')
-reward_shaping_path = "reward_shaping_large_43_6.p"
+reward_shaping_path = "reward_shaping_large.p"
 
 # Hyperparameters --- don't change, RL is very sensitive
 learning_rate = 0.001
 gamma = 0.98
 buffer_limit = 5000
 batch_size = 32
-max_episodes = 50000
-t_max = 600
+max_episodes = 2000
+T_MAX = 600
 min_buffer = 1000
 target_update = 20  # episode(s)
 train_steps = 10
-max_epsilon = 1.0
+MAX_EPSILON = 1.0
 min_epsilon = 0.01
 epsilon_decay = 500
 print_interval = 20
@@ -146,14 +147,15 @@ class BaseAgent(Base):
         # random for exploration - exploitation
         if random.random() < epsilon:
             # choose exploration
-            return random.randrange(self.num_actions)
+            return random.randrange(self.num_actions), np.ones(shape=self.num_actions) / self.num_actions
         else:
             # choose exploitation
             with torch.no_grad():
                 # do not compute gradient for this forward
                 logits = self(state)
-                action = int(torch.argmax(logits).detach().cpu())
-                return action
+                action_prob = softmax(logits.detach().cpu().numpy())
+                action = int(np.argmax(action_prob))
+                return action, action_prob
 
 
 class DQN(BaseAgent):
@@ -174,6 +176,23 @@ class ConvDQN(DQN):
             nn.ReLU(),
         )
         super().construct()
+
+
+class AtariDQN(DQN):
+    def construct(self):
+        self.features = nn.Sequential(
+            nn.Conv2d(self.input_shape[0], 32, kernel_size=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3),
+            nn.ReLU()
+        )
+        self.layers = nn.Sequential(
+            nn.Linear(self.feature_size(), 512),
+            nn.ReLU(),
+            nn.Linear(512, self.num_actions)
+        )
 
 
 def compute_loss(model, target, states, actions, rewards, next_states, dones):
@@ -219,7 +238,7 @@ def optimize(model, target, memory, optimizer):
     return loss
 
 
-def compute_epsilon(episode):
+def compute_epsilon(episode, max_epsilon):
     '''
     Compute epsilon used for epsilon-greedy exploration
     '''
@@ -243,13 +262,14 @@ def reward_shape(state, next_state, reward, done, reward_shaping_mtx):
     goal_state = np.where(state[2] == 1)
     goal_x, goal_y = int(goal_state[1]), int(goal_state[0])
 
-    if goal_x != next_x and goal_y != next_y and not done:
-        # if the next state is done but not goal, decrease the reward of this state
-        reward += -10
+    # if goal_x != next_x and goal_y != next_y and not done:
+    #     # if the next state is done but not goal, decrease the reward of this state
+    #     reward += -10
     return reward_shape_coord(x, y, next_x, next_y, reward, reward_shaping_mtx)
 
 
-def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_path, input_t_max=None):
+def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_path, t_max=T_MAX,
+          max_epsilon=MAX_EPSILON):
     '''
     Train a model of instance `model_class` on environment `env` (`GridDrivingEnv`).
 
@@ -261,8 +281,6 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
 
     Output: `model`: the trained model.
     '''
-    if input_t_max is not None:
-        t_max = input_t_max
     # Initialize model and target network
     if pretrained is None:
         model = model_class(env.observation_space.shape, env.action_space.n).to(device)
@@ -273,15 +291,17 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
     target.eval()
 
     if os.path.exists(reward_shaping_p):
+        print("Use reward shaping")
         reward_shaping_mtx = load_from_pickle(reward_shaping_p)
         use_reward_shaping = True
     else:
+        print("Do not use reward shaping")
         n_lanes, n_width = len(env.lanes), env.width
         reward_shaping_mtx = np.zeros(n_width, n_lanes)
         use_reward_shaping = False
 
-    print("Reward shaping mtx")
-    print(reward_shaping_mtx.T)
+    # print("Reward shaping mtx")
+    # print(reward_shaping_mtx.T)
 
     # Initialize replay buffer
     memory = ReplayBuffer()
@@ -295,7 +315,7 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
     converge_cnt = 0
 
     for episode in range(max_episodes):
-        epsilon = compute_epsilon(episode)
+        epsilon = compute_epsilon(episode, max_epsilon)
         state = env.reset()
         episode_rewards = 0.0
 
@@ -318,10 +338,10 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
         rewards.append(episode_rewards)
 
         # Train the model if memory is sufficient
-        norm_factor = 1 if input_t_max is None else input_t_max
+        # norm_factor = 1 if input_t_max is None else input_t_max
         if len(memory) > min_buffer:
             if (np.mean(rewards[print_interval:]) < 0.1 and not use_reward_shaping) or \
-                    (np.mean(rewards[print_interval:]) / norm_factor < -5.0 and use_reward_shaping):
+                    (np.mean(rewards[print_interval:]) < -0.5 and use_reward_shaping):
                 print('Bad initialization. Please restart the training.')
                 return None
             for i in range(train_steps):
@@ -350,7 +370,7 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
     return model
 
 
-def test(model, env, max_episodes=600):
+def test(model, env, max_episodes=600, t_max=T_MAX):
     '''
     Test the `model` on the environment `env` (GridDrivingEnv) for `max_episodes` (`int`) times.
 
@@ -372,11 +392,11 @@ def test(model, env, max_episodes=600):
     return avg_rewards
 
 
-def get_model():
+def get_model(input_model_path=model_path):
     '''
     Load `model` from disk. Location is specified in `model_path`.
     '''
-    model_class, model_state_dict, input_shape, num_actions = torch.load(model_path)
+    model_class, model_state_dict, input_shape, num_actions = torch.load(input_model_path)
     model = eval(model_class)(input_shape, num_actions).to(device)
     model.load_state_dict(model_state_dict)
     return model
@@ -404,7 +424,9 @@ if __name__ == '__main__':
     if args.train:
         model = None
         while model is None:
-            model = train(ConvDQN, default_env)
+            pretrained = get_model("models/dqn_large.pt")
+            max_epsilon = 0.01
+            model = train(AtariDQN, default_env, pretrained=pretrained, max_epsilon=max_epsilon)
         save_model(model)
     else:
         model = get_model()

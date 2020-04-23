@@ -80,3 +80,20 @@ class ConvDQN(DQN):
             nn.ReLU(),
         )
         super().construct()
+
+
+class AtariDQN(DQN):
+    def construct(self):
+        self.features = nn.Sequential(
+            nn.Conv2d(self.input_shape[0], 32, kernel_size=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3),
+            nn.ReLU()
+        )
+        self.layers = nn.Sequential(
+            nn.Linear(self.feature_size(), 512),
+            nn.ReLU(),
+            nn.Linear(512, self.num_actions)
+        )

@@ -16,6 +16,10 @@ default_width = 50
 
 
 def construct_curriculum_env(curr_id, tensor_state=True):
+    one_eight_config = {'agent_speed_range': default_speed_range, 'width': default_width,
+                        'lanes': default_lanes,
+                        'finish_position': Point(43, 8)
+                        }
     quarter_config = {'agent_speed_range': default_speed_range, 'width': default_width,
                       'lanes': default_lanes,
                       'finish_position': Point(36, 6)
@@ -29,10 +33,12 @@ def construct_curriculum_env(curr_id, tensor_state=True):
                    'finish_position': Point(0, 0)
                    }
     if curr_id == 0:
-        config = quarter_config
+        config = one_eight_config
     elif curr_id == 1:
-        config = half_config
+        config = quarter_config
     elif curr_id == 2:
+        config = half_config
+    elif curr_id == 3:
         config = full_config
     else:
         raise ValueError("No curriculum of ID: {}".format(curr_id))
@@ -74,7 +80,7 @@ def construct_task2_env(tensor_state=True):
                     'lanes': default_lanes,
                     'finish_position': Point(43, 6)
                     }
-    config = curri_large_config
+    config = large_config
     if tensor_state:
         config['observation_type'] = 'tensor'
     return gym.make('GridDriving-v0', **config)

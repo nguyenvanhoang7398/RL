@@ -6,7 +6,8 @@ except:
 import random
 import time
 from parking.env import construct_task2_env
-from parking.dqn import ConvDQN
+from parking.dqn import ConvDQN, AtariDQN
+
 import os
 import torch
 
@@ -36,12 +37,13 @@ class ExampleAgent(Agent):
         in this method.
         '''
         test_case_id = kwargs.get('test_case_id')
+        model = kwargs.get('model')
         '''
         # Uncomment to help debugging
         print('>>> __INIT__ >>>')
         print('test_case_id:', test_case_id)
         '''
-        self.model = self.get_model(kwargs.get('model_path'))
+        self.model = self.get_model(kwargs.get('model_path')) if model is None else model
 
     def initialize(self, **kwargs):
         '''
@@ -192,7 +194,7 @@ def test_single(agent, env, runs=1000, t_max=100, render_step=True):
         state = next_state
         episode_rewards += reward
         if render_step:
-            print("Action: {}".format(action))
+            print("Action: {}".format(env.actions[action]))
             env.render()
         if done:
             break
