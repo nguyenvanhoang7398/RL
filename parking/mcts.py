@@ -102,7 +102,9 @@ class MonteCarloTreeSearch:
         Function to run a single MCTS iteration
         '''
         node = self.addNode()
+        # print("node reward {}".format(node.totalReward))
         reward = self.playoutPolicy(node.state, self.env, self.policy_net)
+        # print("playout reward {}".format(reward))
 
         # sum the reward from playout policy with the node reward
         reward += node.totalReward
@@ -139,7 +141,7 @@ class MonteCarloTreeSearch:
 
                         if goal_x != next_x and goal_y != next_y and done:
                             # if the next state is done but not goal, decrease the reward of this state
-                            newNode.totalReward += -10
+                            newNode.totalReward += -2
 
                         newNode.totalReward += reward_shape_coord(cur_x, cur_y, next_x, next_y, newNode.totalReward,
                                                                   self.reward_shaping_mtx)
@@ -167,6 +169,8 @@ class MonteCarloTreeSearch:
         global random
 
         node_infos = []
+        best_value = float("-inf")
+        best_nodes = []
         for child in node.children.values():
             '''
             FILL ME : Populate the list bestNodes with all children having maximum value
@@ -182,9 +186,12 @@ class MonteCarloTreeSearch:
             for action, cur_node in self.root.children.items():
                 if cur_node is child:
                     matched_action = action
-
+            if node_val >= best_value:
+                if node_val > best_value:
+                    best_value = node_val
+                    best_nodes = []
+                best_nodes.append(child)
             node_infos.append((child, node_val, matched_action))
-        sorted_nodes = sorted(node_infos, key=lambda x: x[1])
-        best_node = sorted_nodes[-1][0]
+        best_node = random.choice(best_nodes)
         q_map = {str(action): val for (node, val, action) in node_infos}
         return best_node, q_map

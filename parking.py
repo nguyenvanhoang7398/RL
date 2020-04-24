@@ -1,5 +1,5 @@
 from parking import run_test
-from parking.reward_shaping import heuristic_reward
+from parking.reward_shaping import heuristic_reward, row_reward
 from parking.dagger import run_dagger, test_dagger
 from parking.debug import debug
 from parking.c_learn import run_c_learn
@@ -9,6 +9,7 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description='Graph Learning')
     parser.add_argument('--rs', action="store_true", help="Running reward shaping")
+    parser.add_argument('--rs-row', action="store_true", help="Running reward shaping")
     parser.add_argument('--dagger', action="store_true", help="Running DAGGER")
     parser.add_argument('--dagger-test-path', type=str, default="", help="Path to test DAGGER")
     parser.add_argument('--test-many', action="store_true", help="Test on many examples")
@@ -23,6 +24,9 @@ if __name__ == "__main__":
     if args.rs:
         print("Run reward shaping")
         heuristic_reward()
+    if args.rs_row:
+        print("Run reward shaping row")
+        row_reward()
     if args.dagger:
         print("Run DAGGER")
         run_dagger()

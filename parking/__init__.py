@@ -7,6 +7,9 @@ import random
 import time
 from parking.env import construct_task2_env
 from parking.dqn import ConvDQN, AtariDQN
+from parking.mcts import MonteCarloTreeSearch, GridWorldState
+from parking.utils import *
+from tqdm import tqdm
 
 import os
 import torch
@@ -15,17 +18,71 @@ FAST_DOWNWARD_PATH = "/fast_downward/"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def get_model(model_path):
+    model_class, model_state_dict, input_shape, num_actions = torch.load(model_path)
+    model = eval(model_class)(input_shape, num_actions).to(device)
+    model.load_state_dict(model_state_dict)
+    return model
+
+
+class LookAheadAgent(Agent):
+    '''
+    An example agent that search if not sure
+    '''
+    def __init__(self, *args, **kwargs):
+        '''
+        [OPTIONAL]
+        Initialize the agent with the `test_case_id` (string), which might be important
+        if your agent is test case dependent.
+
+        For example, you might want to load the appropriate neural networks weight
+        in this method.
+        '''
+        test_case_id = kwargs.get('test_case_id')
+        model = kwargs.get('model')
+        '''
+        # Uncomment to help debugging
+        print('>>> __INIT__ >>>')
+        print('test_case_id:', test_case_id)
+        '''
+        self.model = get_model(kwargs.get('model_path')) if model is None else model
+        self.env = construct_task2_env(tensor_state=False)
+        self.action_map = {a: i for i, a in enumerate(self.env.actions)}
+        self.mcts = MonteCarloTreeSearch(env=self.env, numiters=4,
+                                         explorationParam=explorationParam, playoutPolicy=agentPolicy,
+                                         reward_shaping_mtx=reward_shaping_mtx, policy_net=self.model, random_seed=random_seed)
+
+    def step(self, state, *args, **kwargs):
+        full_state = kwargs.get('full_state')
+        action, logits = self.model.act(state, return_logits=True)
+        sorted_logits = sorted(logits[0])
+        margin = sorted_logits[-1] - sorted_logits[-2]
+        if margin < 0.00:
+            grid_word_state = GridWorldState(full_state)
+            search_action, q_map = self.mcts.buildTreeAndReturnBestAction(initialState=grid_word_state)
+            final_action = self.action_map[search_action]
+        else:
+            final_action = action
+        return final_action
+
+    def update(self, *args, **kwargs):
+        state = kwargs.get('state')
+        action = kwargs.get('action')
+        reward = kwargs.get('reward')
+        next_state = kwargs.get('next_state')
+        done = kwargs.get('done')
+        info = kwargs.get('info')
+
+    def initialize(self, **kwargs):
+        fast_downward_path = kwargs.get('fast_downward_path')
+        agent_speed_range = kwargs.get('agent_speed_range')
+        gamma = kwargs.get('gamma')
+
+
 class ExampleAgent(Agent):
     '''
     An example agent that just output a random action.
     '''
-
-    @staticmethod
-    def get_model(model_path):
-        model_class, model_state_dict, input_shape, num_actions = torch.load(model_path)
-        model = eval(model_class)(input_shape, num_actions).to(device)
-        model.load_state_dict(model_state_dict)
-        return model
 
     def __init__(self, *args, **kwargs):
         '''
@@ -43,7 +100,7 @@ class ExampleAgent(Agent):
         print('>>> __INIT__ >>>')
         print('test_case_id:', test_case_id)
         '''
-        self.model = self.get_model(kwargs.get('model_path')) if model is None else model
+        self.model = get_model(kwargs.get('model_path')) if model is None else model
 
     def initialize(self, **kwargs):
         '''
@@ -135,7 +192,8 @@ def create_agent(test_case_id, model_path=None):
     Method that will be called to create your agent during testing.
     You can, for example, initialize different class of agent depending on test case.
     '''
-    model_path = "models/dqn.pt" if model_path is None else model_path
+    model_path = "model_tuned.pt" if model_path is None else model_path
+    # return LookAheadAgent(test_case_id=test_case_id, model_path=model_path)
     return ExampleAgent(test_case_id=test_case_id, model_path=model_path)
 
 
@@ -143,7 +201,7 @@ def run_test(mode="many"):
     if mode == "many":
         test_fn = test_many
     else:
-        test_fn = test_single
+        test_fn = test_single_look_ahead
 
     def timed_test(task):
         start_time = time.time()
@@ -168,11 +226,40 @@ def run_test(mode="many"):
         tcs = [('task_2_tmax50', 50), ('task_2_tmax40', 40)]
         return {
             'time_limit': 600,
-            'testcases': [{'id': tc, 'env': construct_task2_env(), 'runs': 300, 't_max': t_max} for tc, t_max in tcs]
+            'testcases': [{'id': tc, 'env': construct_task2_env(tensor_state=False), 'runs': 50, 't_max': t_max} for tc, t_max in tcs]
         }
 
     task = get_task()
     timed_test(task)
+
+
+def test_single_look_ahead(agent, env, runs=1000, t_max=100, render_step=True):
+    state = env.reset()
+    if render_step:
+        env.render()
+
+    agent_init = {'fast_downward_path': FAST_DOWNWARD_PATH, 'agent_speed_range': (-3, -1), 'gamma': 1}
+    agent.initialize(**agent_init)
+    episode_rewards = 0.0
+    for t in range(t_max):
+        tensor_state = env.world.as_tensor()
+        action = agent.step(tensor_state, full_state=state)
+        next_state, reward, done, info = env.step(action)
+        full_state = {
+            'state': tensor_state, 'action': action, 'reward': reward, 'next_state': next_state,
+            'done': done, 'info': info
+        }
+        agent.update(**full_state)
+        state = next_state
+        episode_rewards += reward
+        if render_step:
+            print("Action: {}".format(env.actions[action]))
+            env.render()
+        if done:
+            break
+
+    print("Rewards : {:.1f}".format(episode_rewards))
+    return episode_rewards
 
 
 def test_single(agent, env, runs=1000, t_max=100, render_step=True):
@@ -205,13 +292,14 @@ def test_single(agent, env, runs=1000, t_max=100, render_step=True):
 
 def test_many(agent, env, runs=1000, t_max=100):
     rewards = []
-    for run in range(runs):
+    for run in tqdm(range(runs), desc="Test many"):
         state = env.reset()
         agent_init = {'fast_downward_path': FAST_DOWNWARD_PATH, 'agent_speed_range': (-3, -1), 'gamma': 1}
         agent.initialize(**agent_init)
         episode_rewards = 0.0
         for t in range(t_max):
-            action = agent.step(state)
+            tensor_state = env.world.as_tensor()
+            action = agent.step(tensor_state, full_state=state)
             next_state, reward, done, info = env.step(action)
             full_state = {
                 'state': state, 'action': action, 'reward': reward, 'next_state': next_state,

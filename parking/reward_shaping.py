@@ -453,6 +453,17 @@ def parse_sas_plan(pos_memo, start_x, start_y):
         pos_memo[x_pos_from][y_pos_from] = cost-i
 
 
+def row_reward():
+    n_lanes, n_width = 10, 50
+    reward_grid = np.zeros(shape=(n_width, n_lanes))
+    for r in range(n_width):
+        for l in range(n_lanes):
+            reward_grid[r][l] = (n_lanes - l-1)/n_lanes
+    print("Final reward matrix")
+    print(reward_grid.T)
+    save_to_pickle(reward_grid, "reward_shaping_row.p")
+
+
 def heuristic_reward():
     # parse_sas_plan(pos_memo)
     task2_env = construct_task2_env()

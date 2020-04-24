@@ -1,10 +1,5 @@
 from parking.mcts import MonteCarloTreeSearch, GridWorldState
-from parking.env import construct_task2_env, construct_curriculum_env
 from dqn import ConvDQN, AtariDQN
-import torch
-from dqn import reward_shape_coord, reward_shaping_path
-from utils import *
-import numpy as np
 from copy import deepcopy
 from gym.utils import seeding
 import torch.nn as nn
@@ -19,95 +14,33 @@ from parking import test_single, ExampleAgent
 
 np.set_printoptions(linewidth=400, precision=2)
 
-curr_id = 3
-
-random_seed = 42
-n_episodes = 2000
-n_epochs = 50
+n_episodes = 5000
+n_epochs = 10
 trajectory_len = 50
-numiters = 10
 learning_rate = 0.001
 converge_max = 5
 converge_margin = 1e-12
 batch_size = 32
-explorationParam = 0
-save_eval_per_episodes = 3
+save_eval_per_episodes = 5
 n_eval_runs = 10
-max_playout_step = 3
-min_positive_examples = 2000
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-if curr_id is not None:
-    env = construct_curriculum_env(curr_id, tensor_state=False)
-    tensor_env = construct_curriculum_env(curr_id)
-    reward_shaping_path = "reward_shaping_large.p"
-else:
-    env = construct_task2_env(tensor_state=False)
-    tensor_env = construct_task2_env()
-n_lanes, n_width = len(env.lanes), env.width
-
+min_positive_examples = 0
 random, seed = seeding.np_random(random_seed)
 
-if os.path.exists(reward_shaping_path):
-    print("Use reward shaping")
-    reward_shaping_mtx = load_from_pickle(reward_shaping_path)
-    use_reward_shaping = True
-else:
-    print("Do not use reward shaping")
-    reward_shaping_mtx = np.zeros(shape=(n_width, n_lanes))
-    use_reward_shaping = False
-
 # print("Shape: {}".format(reward_shaping_mtx.shape))
-#
+
 # print(reward_shaping_mtx.T)
 
 
-def agentPolicy(state, env, policy_net):
-    global random
-    # print(state.state[3])
-    reward = 0.
-    cnt = 0
-    while not state.isDone() and cnt < max_playout_step:
-        state_np = env.world.as_tensor()
-        state_tensor = torch.FloatTensor([state_np]).to(device)
-        logits = policy_net(state_tensor).squeeze(0)
-        action_idx = int(torch.argmax(logits).detach().cpu())
-        action = env.actions[action_idx]
-
-        next_state = state.simulateStep(env=env, action=action)
-        reward = state.getReward()
-
-        # update this new node reward with reward shaping
-        cur_agent_pos = state.state.agent.position
-        cur_x, cur_y = cur_agent_pos.x, cur_agent_pos.y
-        next_agent_pos = next_state.state.agent.position
-        next_x, next_y = next_agent_pos.x, next_agent_pos.y
-
-        goal_pos = state.state.finish_position
-        goal_x, goal_y = goal_pos.x, goal_pos.y
-        done = next_state.is_done
-
-        if goal_x != next_x and goal_y != next_y and done:
-            # if the next state is done but not goal, decrease the reward of this state
-            reward += -10
-
-        reward = reward_shape_coord(cur_x, cur_y, next_x, next_y, reward,
-                                    reward_shaping_mtx)
-        # reward += state.getReward()
-        state = next_state
-        cnt += 1
-    return reward
-
-
-def randomPolicy(state, env):
+def randomPolicy(state, env, _):
     '''
     Policy followed in MCTS simulation for playout
     '''
     global random
     reward = 0.
-    while not state.isDone():
-        action = random.choice(env.actions)
+    cnt = 0
+    while not state.isDone() and cnt < max_playout_step:
+        actions = [a for a in env.actions if str(a) != "down"]
+        action = np.random.choice(actions, replace=False, p=[0.85, 0.05, 0.05, 0.05])
         next_state = state.simulateStep(env=env, action=action)
         reward = state.getReward()
 
@@ -123,12 +56,13 @@ def randomPolicy(state, env):
 
         if goal_x != next_x and goal_y != next_y and done:
             # if the next state is done but not goal, decrease the reward of this state
-            reward += -10
+            reward += -2
 
         reward = reward_shape_coord(cur_x, cur_y, next_x, next_y, reward,
                                     reward_shaping_mtx)
-        # reward += state.getReward()
+        reward += state.getReward()
         state = next_state
+        cnt += 1
     return reward
 
 
@@ -178,6 +112,7 @@ class DAGGER(object):
             reward = test_single(agent, eval_env, t_max=trajectory_len, render_step=False)
             eval_rewards.append(reward)
         print("Average reward: {}".format(np.mean(eval_rewards)))
+        train_ep = 0
 
         # iterate through epochs
         for episode in tqdm(range(self.n_episodes), desc="Iterating episodes"):
@@ -220,9 +155,13 @@ class DAGGER(object):
                     all_train_reward_margins.append(1.0/len(trajectory_tensor_states))
                 continue
             else:
-                print("Run fails with trajectory length: {}".format(len(trajectory_tensor_states)))
+                traj_len = len(trajectory_tensor_states)
+                print("Run fails with trajectory length: {}".format(traj_len))
                 if len(all_train_x) < min_positive_examples:
                     print("Skip MCTS due to only {} positive examples".format(len(all_train_x)))
+                    continue
+                if traj_len == 1:
+                    print("Skip due to short trajectory length")
                     continue
 
             data_x, data_y = [], []
@@ -234,8 +173,13 @@ class DAGGER(object):
                 expert_action, q_map = self.mcts.buildTreeAndReturnBestAction(initialState=grid_word_state)
                 expert_actions.append(expert_action)
 
-                reward_margin = q_map[str(expert_action)] - q_map[str(agent_action)]
-
+                if str(agent_action) == "down":
+                    reward_margin = 10
+                else:
+                    reward_margin = q_map[str(expert_action)] - q_map[str(agent_action)]
+                if str(expert_action) == "up" and str(agent_action) != "up":
+                    # prioritizing up action
+                    reward_margin += ((n_width - i) / 10)
                 reward_margins.append(reward_margin)
                 data_x.append(trajectory_tensor_states[i])
                 data_y.append(self.action_map[str(expert_action)])
@@ -246,7 +190,6 @@ class DAGGER(object):
                     print_state_tensor(state)
                     if i < len(agent_actions):
                         print("Agent action: {}".format(self.env.actions[agent_actions[i]]))
-                        print("Agent logits: {}".format(agent_logits[i]))
                         print("Expert action: {}, margin: {}".format(expert_actions[i], reward_margins[i]))
 
             # if len(data_x) > 1:
@@ -258,13 +201,19 @@ class DAGGER(object):
                 test_y = [data_y[i] for i in test_idx]
                 train_reward_margin = [reward_margins[i] for i in train_idx]
             else:
-                train_x, test_x, train_y, test_y = data_x, [], data_y, []
-                train_reward_margin = reward_margins
-
+                train_x, test_x, train_y, test_y = [], [], [], []
+                train_reward_margin = []
+                for i, (margin, x, y) in enumerate(zip(reward_margins, data_x, data_y)):
+                    if margin > 0.:
+                        train_reward_margin.append(min(margin, 6)+1e-6)     # smoothing
+                        train_x.append(x)
+                        train_y.append(y)
+            if len(train_reward_margin) == 0:
+                continue
             train_reward_margin = softmax(train_reward_margin)
 
             # only train the significant mistakes
-            train_reward_margin = [0. if x < 1e-3 else x for x in train_reward_margin]
+            print(train_reward_margin)
 
             # add some smoothing coeff to make sure all examples are concerned
             # train_reward_margin += 1e-9
@@ -285,7 +234,6 @@ class DAGGER(object):
             converge_cnt, last_loss = 0, None
 
             # training imitation learning
-            print("Train {} samples, test {} samples".format(len(all_train_x), len(all_test_x)))
             for epoch in tqdm(range(self.n_epochs), desc="Training"):
                 batch_idx, epoch_loss = 0, 0.
                 while batch_idx < dataset_size:
@@ -326,6 +274,7 @@ class DAGGER(object):
             f1_val = f1_score(all_train_y, train_predictions, average="macro")
             print("Episode: {} | Loss: {} | F1: {} | Confusion matrix".format(episode, epoch_loss, f1_val))
             print(confusion_matrix(all_train_y, train_predictions))
+            train_ep += 1
             #
             # # evaluate testing imitation learning
             # test_x_tensor = torch.FloatTensor(all_test_x).to(device)
@@ -335,12 +284,17 @@ class DAGGER(object):
             # print("Episode: {} | F1: {} | Confusion matrix".format(episode, f1_val))
             # print(confusion_matrix(all_test_y, predictions))
 
-            if (episode + 1) % save_eval_per_episodes == 0:
+            if (train_ep + 1) % save_eval_per_episodes == 0:
                 self.policy_net.eval()
                 print("Test and save model")
                 model_path = os.path.join("models", self.exp_name, "{}.pt".format(episode))
+                train_x_path = os.path.join("models", self.exp_name, "train_x.p")
+                train_y_path = os.path.join("models", self.exp_name, "train_y.p")
+
                 ensure_path(model_path)
                 save_model(self.policy_net, model_path)
+                save_to_pickle(all_train_x, train_x_path)
+                save_to_pickle(all_train_y, train_y_path)
 
                 eval_rewards = []
                 agent = ExampleAgent(test_case_id=0, model_path=model_path)
@@ -357,9 +311,9 @@ class DAGGER(object):
 
 
 def run_dagger():
-    # policy_net = ConvDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
+    policy_net = ConvDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
     # policy_net = AtariDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
-    policy_net = get_model("models/dqn_large.pt")
+    # policy_net = get_model("models/dqn_large.pt")
     # policy_net = get_model("models/one_eight/824.pt")
 
     dagger = DAGGER(n_lanes, n_width, policy_net, env, debug=True)

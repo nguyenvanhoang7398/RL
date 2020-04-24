@@ -2,6 +2,8 @@ import torch
 import torch.autograd as autograd
 import torch.nn as nn
 import random
+import numpy as np
+from scipy.special import softmax
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -35,7 +37,7 @@ class Base(nn.Module):
 
 
 class BaseAgent(Base):
-    def act(self, state, epsilon=0.0):
+    def act(self, state, epsilon=0.0, return_logits=False):
         if not isinstance(state, torch.FloatTensor):
             state = torch.from_numpy(state).float().unsqueeze(0).to(device)
         '''
@@ -52,14 +54,19 @@ class BaseAgent(Base):
         # random for exploration - exploitation
         if random.random() < epsilon:
             # choose exploration
-            return random.randrange(self.num_actions)
+            action = random.randrange(self.num_actions)
+            logits = np.ones(shape=self.num_actions) / self.num_actions
         else:
             # choose exploitation
             with torch.no_grad():
                 # do not compute gradient for this forward
                 logits = self(state)
-                action = int(torch.argmax(logits).detach().cpu())
-                return action
+                logits = softmax(logits.detach().cpu().numpy())
+                action = int(np.argmax(logits))
+        if return_logits:
+            return action, logits
+        else:
+            return action
 
 
 class DQN(BaseAgent):
