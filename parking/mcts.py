@@ -62,7 +62,7 @@ class Node:
         self.numVisits = 0
         self.totalReward = state.reward #0
         self.isDone = state.isDone()
-        self.allChildrenAdded = state.isDone()
+        self.allChildrenAddedMonteCarloTreeSearch = state.isDone()
         self.children = {}
 
 
@@ -126,7 +126,6 @@ class MonteCarloTreeSearch:
                 for action in actions:
                     if action not in cur_node.children:
                         childnode = cur_node.state.simulateStep(env=self.env, action=action)
-
                         newNode = Node(state=childnode, parent=cur_node)
 
                         # update this new node reward with reward shaping
@@ -135,16 +134,12 @@ class MonteCarloTreeSearch:
                         next_agent_pos = newNode.state.state.agent.position
                         next_x, next_y = next_agent_pos.x, next_agent_pos.y
 
-                        goal_pos = cur_node.state.state.finish_position
-                        goal_x, goal_y = goal_pos.x, goal_pos.y
-                        done = childnode.is_done
-
-                        if goal_x != next_x and goal_y != next_y and done:
+                        if newNode.state.state.agent_state.name != 'alive':
                             # if the next state is done but not goal, decrease the reward of this state
-                            newNode.totalReward += -2
-
-                        newNode.totalReward += reward_shape_coord(cur_x, cur_y, next_x, next_y, newNode.totalReward,
-                                                                  self.reward_shaping_mtx)
+                            newNode.totalReward += -4
+                        else:
+                            newNode.totalReward += reward_shape_coord(cur_x, cur_y, next_x, next_y, newNode.totalReward,
+                                                                      self.reward_shaping_mtx)
 
                         cur_node.children[action] = newNode
                         if len(actions) == len(cur_node.children):

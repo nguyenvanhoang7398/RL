@@ -30,7 +30,8 @@ def construct_curriculum_env(curr_id, tensor_state=True):
                   }
     full_config = {'agent_speed_range': default_speed_range, 'width': default_width,
                    'lanes': default_lanes,
-                   'finish_position': Point(0, 0)
+                   'finish_position': Point(0, 0), 'agent_pos_init': Point(3, 0)
+
                    }
     if curr_id == 0:
         config = one_eight_config

@@ -15,13 +15,14 @@ from parking import test_single, ExampleAgent
 np.set_printoptions(linewidth=400, precision=2)
 
 n_episodes = 5000
-n_epochs = 10
+n_epochs = 20
 trajectory_len = 50
 learning_rate = 0.001
 converge_max = 5
 converge_margin = 1e-12
 batch_size = 32
 save_eval_per_episodes = 5
+train_per_episodes = 100
 n_eval_runs = 10
 min_positive_examples = 0
 random, seed = seeding.np_random(random_seed)
@@ -56,7 +57,7 @@ def randomPolicy(state, env, _):
 
         if goal_x != next_x and goal_y != next_y and done:
             # if the next state is done but not goal, decrease the reward of this state
-            reward += -2
+            reward += -4
 
         reward = reward_shape_coord(cur_x, cur_y, next_x, next_y, reward,
                                     reward_shaping_mtx)
@@ -117,6 +118,7 @@ class DAGGER(object):
         # iterate through epochs
         for episode in tqdm(range(self.n_episodes), desc="Iterating episodes"):
             self.env.reset()
+            # self.env.render()
             self.policy_net.eval()
 
             trajectory_tensor_states = [self.env.world.as_tensor()]
@@ -149,10 +151,10 @@ class DAGGER(object):
 
             if successful:
                 print("Successful run, no need to run imitation learning")
-                for i, state in enumerate(trajectory_tensor_states):
-                    all_train_x.append(trajectory_tensor_states[i])
-                    all_train_y.append(agent_actions[i])
-                    all_train_reward_margins.append(1.0/len(trajectory_tensor_states))
+                # for i, state in enumerate(trajectory_tensor_states):
+                #     all_train_x.append(trajectory_tensor_states[i])
+                #     all_train_y.append(agent_actions[i])
+                #     all_train_reward_margins.append(1.0/len(trajectory_tensor_states))
                 continue
             else:
                 traj_len = len(trajectory_tensor_states)
@@ -167,7 +169,10 @@ class DAGGER(object):
             data_x, data_y = [], []
 
             # start building expert data for imitation learning
+            # only cares about the failed step
             for i, state in enumerate(tqdm(trajectory_normal_states, desc="Run MCTS")):
+                if i < len(trajectory_normal_states)-1:
+                    continue
                 grid_word_state = GridWorldState(state)
                 agent_action = self.env.actions[agent_actions[i]]
                 expert_action, q_map = self.mcts.buildTreeAndReturnBestAction(initialState=grid_word_state)
@@ -184,13 +189,17 @@ class DAGGER(object):
                 data_x.append(trajectory_tensor_states[i])
                 data_y.append(self.action_map[str(expert_action)])
 
-            if self.debug:
-                for i, state in enumerate(trajectory_tensor_states):
-                    print("State")
-                    print_state_tensor(state)
-                    if i < len(agent_actions):
-                        print("Agent action: {}".format(self.env.actions[agent_actions[i]]))
-                        print("Expert action: {}, margin: {}".format(expert_actions[i], reward_margins[i]))
+            # if self.debug:
+            #     for i, state in enumerate(trajectory_tensor_states):
+            #         print("State")
+            #         print_state_tensor(state)
+            #         if i < len(agent_actions):
+            #             print("Agent action: {}".format(self.env.actions[agent_actions[i]]))
+            #             print("Expert action: {}, margin: {}".format(expert_actions[i], reward_margins[i]))
+
+            print_state_tensor(trajectory_tensor_states[-1])
+            print("Agent action: {}".format(self.env.actions[agent_actions[-1]]))
+            print("Expert action: {}, margin: {}".format(expert_actions[-1], reward_margins[0]))
 
             # if len(data_x) > 1:
             if False:
@@ -226,63 +235,65 @@ class DAGGER(object):
 
             dataset_size = len(all_train_x)
 
-            # start training policy net to imitate the expert
-            self.policy_net.train()
-            loss_fn = nn.CrossEntropyLoss(reduction="none")
-            optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
+            if episode % train_per_episodes == 0:
 
-            converge_cnt, last_loss = 0, None
+                # start training policy net to imitate the expert
+                self.policy_net.train()
+                loss_fn = nn.CrossEntropyLoss(reduction="none")
+                optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
 
-            # training imitation learning
-            for epoch in tqdm(range(self.n_epochs), desc="Training"):
-                batch_idx, epoch_loss = 0, 0.
-                while batch_idx < dataset_size:
-                    batch_train_x = all_train_x[batch_idx: batch_idx + batch_size]
-                    batch_train_y = all_train_y[batch_idx: batch_idx + batch_size]
-                    batch_reward_margin = all_train_reward_margins[batch_idx: batch_idx + batch_size]
+                converge_cnt, last_loss = 0, None
 
-                    train_x_tensor = torch.FloatTensor(batch_train_x).to(device)
-                    train_y_tensor = torch.LongTensor(batch_train_y).to(device)
-                    batch_reward_margin_tensor = torch.FloatTensor(batch_reward_margin).to(device)
+                # training imitation learning
+                for epoch in tqdm(range(self.n_epochs), desc="Training"):
+                    batch_idx, epoch_loss = 0, 0.
+                    while batch_idx < dataset_size:
+                        batch_train_x = all_train_x[batch_idx: batch_idx + batch_size]
+                        batch_train_y = all_train_y[batch_idx: batch_idx + batch_size]
+                        batch_reward_margin = all_train_reward_margins[batch_idx: batch_idx + batch_size]
 
-                    logits = self.policy_net(train_x_tensor)
-                    loss = loss_fn(logits, train_y_tensor)
-                    weighted_loss = loss * batch_reward_margin_tensor
-                    loss_val = torch.sum(weighted_loss).detach().cpu().numpy()
-                    optimizer.zero_grad()
-                    weighted_loss.sum().backward()
-                    optimizer.step()
+                        train_x_tensor = torch.FloatTensor(batch_train_x).to(device)
+                        train_y_tensor = torch.LongTensor(batch_train_y).to(device)
+                        batch_reward_margin_tensor = torch.FloatTensor(batch_reward_margin).to(device)
 
-                    epoch_loss += loss_val
-                    batch_idx += batch_size
+                        logits = self.policy_net(train_x_tensor)
+                        loss = loss_fn(logits, train_y_tensor)
+                        weighted_loss = loss * batch_reward_margin_tensor
+                        loss_val = torch.sum(weighted_loss).detach().cpu().numpy()
+                        optimizer.zero_grad()
+                        weighted_loss.sum().backward()
+                        optimizer.step()
 
-                epoch_loss /= dataset_size
+                        epoch_loss += loss_val
+                        batch_idx += batch_size
 
-                if last_loss is not None:
-                    if np.abs(epoch_loss-last_loss) < converge_margin:
-                        converge_cnt += 1
-                    if converge_cnt == converge_max:
-                        print("Training converges")
-                        break
-                last_loss = epoch_loss
+                    epoch_loss /= dataset_size
 
-            # self.policy_net.eval()
-            # evaluate training
-            train_x_tensor = torch.FloatTensor(all_train_x).to(device)
-            logits = self.policy_net(train_x_tensor)
-            train_predictions = np.argmax(logits.detach().cpu().numpy(), axis=1)
-            f1_val = f1_score(all_train_y, train_predictions, average="macro")
-            print("Episode: {} | Loss: {} | F1: {} | Confusion matrix".format(episode, epoch_loss, f1_val))
-            print(confusion_matrix(all_train_y, train_predictions))
-            train_ep += 1
-            #
-            # # evaluate testing imitation learning
-            # test_x_tensor = torch.FloatTensor(all_test_x).to(device)
-            # logits = self.policy_net(test_x_tensor)
-            # predictions = np.argmax(logits.detach().cpu().numpy(), axis=1)
-            # f1_val = f1_score(all_test_y, predictions, average="macro")
-            # print("Episode: {} | F1: {} | Confusion matrix".format(episode, f1_val))
-            # print(confusion_matrix(all_test_y, predictions))
+                    if last_loss is not None:
+                        if np.abs(epoch_loss-last_loss) < converge_margin:
+                            converge_cnt += 1
+                        if converge_cnt == converge_max:
+                            print("Training converges")
+                            break
+                    last_loss = epoch_loss
+
+                # self.policy_net.eval()
+                # evaluate training
+                train_x_tensor = torch.FloatTensor(all_train_x).to(device)
+                logits = self.policy_net(train_x_tensor)
+                train_predictions = np.argmax(logits.detach().cpu().numpy(), axis=1)
+                f1_val = f1_score(all_train_y, train_predictions, average="macro")
+                print("Episode: {} | Loss: {} | F1: {} | Confusion matrix".format(episode, epoch_loss, f1_val))
+                print(confusion_matrix(all_train_y, train_predictions))
+                train_ep += 1
+                #
+                # # evaluate testing imitation learning
+                # test_x_tensor = torch.FloatTensor(all_test_x).to(device)
+                # logits = self.policy_net(test_x_tensor)
+                # predictions = np.argmax(logits.detach().cpu().numpy(), axis=1)
+                # f1_val = f1_score(all_test_y, predictions, average="macro")
+                # print("Episode: {} | F1: {} | Confusion matrix".format(episode, f1_val))
+                # print(confusion_matrix(all_test_y, predictions))
 
             if (train_ep + 1) % save_eval_per_episodes == 0:
                 self.policy_net.eval()
@@ -311,9 +322,9 @@ class DAGGER(object):
 
 
 def run_dagger():
-    policy_net = ConvDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
+    # policy_net = ConvDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
     # policy_net = AtariDQN(tensor_env.observation_space.shape, tensor_env.action_space.n).to(device)
-    # policy_net = get_model("models/dqn_large.pt")
+    policy_net = get_model("model_tuned_recent.pt")
     # policy_net = get_model("models/one_eight/824.pt")
 
     dagger = DAGGER(n_lanes, n_width, policy_net, env, debug=True)

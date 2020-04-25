@@ -6,7 +6,7 @@ import numpy as np
 from dqn import reward_shaping_path, reward_shape_coord
 
 curr_id = 3
-numiters = 4
+numiters = 16
 max_playout_step = 2
 explorationParam = 0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,6 +29,7 @@ n_lanes, n_width = len(env.lanes), env.width
 if os.path.exists(reward_shaping_path):
     print("Use reward shaping at {}".format(reward_shaping_path))
     reward_shaping_mtx = load_from_pickle(reward_shaping_path)
+    reward_shaping_mtx[0][0] -= 10
     use_reward_shaping = True
 else:
     print("Do not use reward shaping")
@@ -61,12 +62,12 @@ def agentPolicy(state, env, policy_net):
         goal_x, goal_y = goal_pos.x, goal_pos.y
         done = next_state.is_done
 
-        # if goal_x != next_x and goal_y != next_y and done:
-        #     # if the next state is done but not goal, decrease the reward of this state
-        #     reward += -10
-
-        reward = reward_shape_coord(cur_x, cur_y, next_x, next_y, reward,
-                                    reward_shaping_mtx)
+        if goal_x != next_x and goal_y != next_y and done:
+            # if the next state is done but not goal, decrease the reward of this state
+            reward += -4
+        else:
+            reward = reward_shape_coord(cur_x, cur_y, next_x, next_y, reward,
+                                        reward_shaping_mtx)
         reward += state.getReward()
         state = next_state
         cnt += 1

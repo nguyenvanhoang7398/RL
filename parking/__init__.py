@@ -10,6 +10,7 @@ from parking.dqn import ConvDQN, AtariDQN
 from parking.mcts import MonteCarloTreeSearch, GridWorldState
 from parking.utils import *
 from tqdm import tqdm
+from copy import deepcopy
 
 import os
 import torch
@@ -48,30 +49,27 @@ class LookAheadAgent(Agent):
         self.model = get_model(kwargs.get('model_path')) if model is None else model
         self.env = construct_task2_env(tensor_state=False)
         self.action_map = {a: i for i, a in enumerate(self.env.actions)}
-        self.mcts = MonteCarloTreeSearch(env=self.env, numiters=4,
-                                         explorationParam=explorationParam, playoutPolicy=agentPolicy,
-                                         reward_shaping_mtx=reward_shaping_mtx, policy_net=self.model, random_seed=random_seed)
 
     def step(self, state, *args, **kwargs):
         full_state = kwargs.get('full_state')
         action, logits = self.model.act(state, return_logits=True)
-        sorted_logits = sorted(logits[0])
-        margin = sorted_logits[-1] - sorted_logits[-2]
-        if margin < 0.00:
-            grid_word_state = GridWorldState(full_state)
-            search_action, q_map = self.mcts.buildTreeAndReturnBestAction(initialState=grid_word_state)
-            final_action = self.action_map[search_action]
+        logit_v_i = [(v, i) for i, v in enumerate(logits[0])]
+        sorted_logits = sorted(logit_v_i, key=lambda x: x[0])
+        margin = sorted_logits[-1][0] - sorted_logits[-2][0]
+        if margin < 0.0065 and action != 4:
+            state_desc = env.step(state=deepcopy(full_state), action=action)
+            if state_desc[0].agent_state.name == 'alive':
+                final_action = action
+            else:
+                final_action = sorted_logits[-2][1]
+            # search_action, q_map = self.mcts.buildTreeAndReturnBestAction(initialState=grid_word_state)
+            # final_action = self.action_map[search_action]
         else:
             final_action = action
         return final_action
 
     def update(self, *args, **kwargs):
-        state = kwargs.get('state')
-        action = kwargs.get('action')
-        reward = kwargs.get('reward')
-        next_state = kwargs.get('next_state')
-        done = kwargs.get('done')
-        info = kwargs.get('info')
+        pass
 
     def initialize(self, **kwargs):
         fast_downward_path = kwargs.get('fast_downward_path')
@@ -192,9 +190,10 @@ def create_agent(test_case_id, model_path=None):
     Method that will be called to create your agent during testing.
     You can, for example, initialize different class of agent depending on test case.
     '''
-    model_path = "model_tuned.pt" if model_path is None else model_path
-    # return LookAheadAgent(test_case_id=test_case_id, model_path=model_path)
-    return ExampleAgent(test_case_id=test_case_id, model_path=model_path)
+    # model_path = "models/dagger-dqn-04_25_20-04-32-19/476.pt" if model_path is None else model_path
+    model_path = "model_tuned_recent.pt"
+    return LookAheadAgent(test_case_id=test_case_id, model_path=model_path)
+    # return ExampleAgent(test_case_id=test_case_id, model_path=model_path)
 
 
 def run_test(mode="many"):
@@ -226,7 +225,7 @@ def run_test(mode="many"):
         tcs = [('task_2_tmax50', 50), ('task_2_tmax40', 40)]
         return {
             'time_limit': 600,
-            'testcases': [{'id': tc, 'env': construct_task2_env(tensor_state=False), 'runs': 50, 't_max': t_max} for tc, t_max in tcs]
+            'testcases': [{'id': tc, 'env': construct_task2_env(tensor_state=False), 'runs': 300, 't_max': t_max} for tc, t_max in tcs]
         }
 
     task = get_task()
@@ -292,7 +291,7 @@ def test_single(agent, env, runs=1000, t_max=100, render_step=True):
 
 def test_many(agent, env, runs=1000, t_max=100):
     rewards = []
-    for run in tqdm(range(runs), desc="Test many"):
+    for run in range(runs):
         state = env.reset()
         agent_init = {'fast_downward_path': FAST_DOWNWARD_PATH, 'agent_speed_range': (-3, -1), 'gamma': 1}
         agent.initialize(**agent_init)

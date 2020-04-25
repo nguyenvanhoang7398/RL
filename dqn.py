@@ -20,7 +20,7 @@ from parking.env import construct_task2_env
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 script_path = os.path.dirname(os.path.realpath(__file__))
-model_path = os.path.join(script_path, 'model.pt')
+model_path = os.path.join(script_path, 'model_tuned2.pt')
 reward_shaping_path = "rs_large3.p"
 # reward_shaping_path = "reward_shaping_large.p"
 
@@ -29,7 +29,7 @@ learning_rate = 0.001
 gamma = 0.98
 buffer_limit = 5000
 batch_size = 32
-max_episodes = 20000
+max_episodes = 1000
 T_MAX = 600
 min_buffer = 1000
 target_update = 20  # episode(s)
@@ -132,8 +132,7 @@ class Base(nn.Module):
 
 class BaseAgent(Base):
     def act(self, state, epsilon=0.0, return_logits=False):
-        if not isinstance(state, torch.FloatTensor):
-            state = torch.from_numpy(state).float().unsqueeze(0).to(device)
+        state = torch.from_numpy(state).float().unsqueeze(0).to(device)
         '''
         FILL ME : This function should return epsilon-greedy action.
 
@@ -146,21 +145,13 @@ class BaseAgent(Base):
         '''
 
         # random for exploration - exploitation
-        if random.random() < epsilon:
-            # choose exploration
-            action = random.randrange(self.num_actions)
-            logits = np.ones(shape=self.num_actions) / self.num_actions
-        else:
-            # choose exploitation
-            with torch.no_grad():
-                # do not compute gradient for this forward
-                logits = self(state)
-                logits = softmax(logits.detach().cpu().numpy())
-                action = int(np.argmax(logits))
-        if return_logits:
-            return action, logits
-        else:
-            return action
+
+        with torch.no_grad():
+            # do not compute gradient for this forward
+            logits = self(state)
+            logits = softmax(logits.detach().cpu().numpy())
+            action = int(np.argmax(logits))
+        return action, logits
 
 
 class DQN(BaseAgent):
@@ -298,6 +289,7 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
     if os.path.exists(reward_shaping_p):
         print("Use reward shaping from {}".format(reward_shaping_path))
         reward_shaping_mtx = load_from_pickle(reward_shaping_p)
+        # reward_shaping_mtx[0][0] -= 10
         use_reward_shaping = True
     else:
         print("Do not use reward shaping")
@@ -346,7 +338,7 @@ def train(model_class, env, pretrained=None, reward_shaping_p=reward_shaping_pat
         # norm_factor = 1 if input_t_max is None else input_t_max
         if len(memory) > min_buffer:
             if (np.mean(rewards[print_interval:]) < 0.1 and not use_reward_shaping) or \
-                    (np.mean(rewards[print_interval:]) < 0. and use_reward_shaping):
+                    (np.mean(rewards[print_interval:]) < -0.3 and use_reward_shaping):
                 print('Bad initialization. Please restart the training.')
                 return None
             for i in range(train_steps):
@@ -429,10 +421,10 @@ if __name__ == '__main__':
     if args.train:
         model = None
         while model is None:
-            # pretrained = get_model("models/dagger-dqn-04_24_20-08-39-14/89.pt")
-            # max_epsilon = 0.2
-            # model = train(AtariDQN, default_env, pretrained=pretrained, max_epsilon=max_epsilon)
-            model = train(AtariDQN, default_env)
+            pretrained = get_model("model_tuned_recent.pt")
+            max_epsilon = 0.01
+            model = train(AtariDQN, default_env, pretrained=pretrained, max_epsilon=max_epsilon)
+            # model = train(AtariDQN, default_env)
         save_model(model)
     else:
         model = get_model()
